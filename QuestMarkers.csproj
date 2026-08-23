@@ -1,0 +1,95 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>maschine-QuestMarkers</AssemblyName>
+    <RootNamespace>QuestMarkers</RootNamespace>
+    <Authors>maschine</Authors>
+    <Company>https://github.com/maschine34675/QuestMarkers</Company>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <Deterministic>true</Deterministic>
+    <AssemblyVersion>1.0.0</AssemblyVersion>
+    <FileVersion>$(AssemblyVersion)</FileVersion>
+    <Version>$(AssemblyVersion)</Version>
+    <Configurations>Debug;Release</Configurations>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <OutputPath>bin\Debug\</OutputPath>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <DefineConstants>TRACE</DefineConstants>
+    <OutputPath>bin\Release\</OutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- No Harmony and no SPT reflection: the mod patches nothing and only
+         reads game state, so only what the code actually touches is bound. -->
+    <Reference Include="BepInEx">
+      <HintPath>..\..\BepInEx\core\BepInEx.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Anvil-WebOverlay">
+      <HintPath>..\..\BepInEx\plugins\Anvil-WebOverlay\Anvil-WebOverlay.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>..\..\EscapeFromTarkov_Data\Managed\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Comfort">
+      <HintPath>..\..\EscapeFromTarkov_Data\Managed\Comfort.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>..\..\EscapeFromTarkov_Data\Managed\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>..\..\EscapeFromTarkov_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>..\..\EscapeFromTarkov_Data\Managed\UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.PhysicsModule">
+      <HintPath>..\..\EscapeFromTarkov_Data\Managed\UnityEngine.PhysicsModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="web\markers.html">
+      <LogicalName>QuestMarkers.markers.html</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <Exec Command="copy &quot;$(TargetPath)&quot; &quot;$(ProjectDir)\..\..\BepInEx\plugins\$(TargetFileName)&quot;" />
+  </Target>
+
+  <!-- The release zip extracts over the game root and contains exactly the
+       plugin DLL under BepInEx\plugins - nothing in the zip root. -->
+  <Target Name="CreateReleaseZip" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
+    <PropertyGroup>
+      <PackageRoot>$(ProjectDir)obj\package\</PackageRoot>
+      <PackagePluginDir>$(PackageRoot)BepInEx\plugins\</PackagePluginDir>
+      <ReleaseZipPath>$(ProjectDir)artifacts\maschine-QuestMarkers-$(AssemblyVersion).zip</ReleaseZipPath>
+    </PropertyGroup>
+    <RemoveDir Directories="$(PackageRoot)" />
+    <MakeDir Directories="$(PackagePluginDir);$(ProjectDir)artifacts" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(PackagePluginDir)" />
+    <Delete Files="$(ReleaseZipPath)" />
+    <ZipDirectory SourceDirectory="$(PackageRoot)" DestinationFile="$(ReleaseZipPath)" />
+    <Message Importance="high" Text="Release package created: $(ReleaseZipPath)" />
+  </Target>
+
+</Project>

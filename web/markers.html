@@ -1,0 +1,235 @@
+<!doctype html>
+<meta charset='utf-8'>
+<!--
+  Quest marker HUD. The mod projects every objective with the game camera and
+  sends one frame per rendered frame on the library's "markers" channel:
+
+    [{"i":"<id>","x":0.5,"y":0.5,"b":0,"d":142,"k":"zone","l":"Checking"}]
+
+  x/y are viewport coordinates with a CSS top-left origin; b=1 means the
+  target is behind the camera (x/y already mirrored). d is meters, k the
+  objective kind (zone|plant|beacon|flare|item, each with its own icon and
+  colour), l the quest caption. Marker elements are keyed by i and
+  reused between frames; targets missing from a frame fade out. On-screen
+  targets get an icon with label and distance, off-screen ones an arrow
+  clamped to the border pointing toward them.
+
+  Frames are posted latest-only and consumed with { latest: true }, so a slow
+  moment never leaves a backlog of stale positions to render. The "cfg"
+  channel carries the display options, retained by the library so a reloaded
+  document gets them again, and resent whenever one of them changes:
+
+    {"labels":true,"distance":true,"edge":true,
+     "scale":1,"farScale":0.8,"farDistance":250}
+
+  scale is the overall marker size; a marker shrinks linearly from scale at
+  arm's length to scale*farScale at farDistance meters and stays there.
+-->
+<style>
+  /* The library's shared palette when it is injected (InjectTheme), the
+     same values as fallback when the page is opened without it. */
+  :root {
+    --gold: var(--wo-gold, #c2ad6d);
+    /* Deliberately not the theme's ink (0.74): against a bright sky or snow
+       the small pins and tags need a nearly opaque panel to stay readable. */
+    --ink: rgba(16,17,13,0.92);
+    --text: var(--wo-text, #d0cdbd);
+    --dim: var(--wo-dim, #918e7e);
+    --border: rgba(194,173,109,0.55);
+    --font: var(--wo-font, 'Segoe UI',system-ui,sans-serif);
+  }
+  /* The chroma-key fallback blends translucent pixels towards black, not
+     towards the game: solid panels and no shadows there. */
+  .wo-chroma .pin, .wo-chroma .tag, .wo-chroma .edge .dist { background:#1b1c18; box-shadow:none; }
+  .wo-chroma .edge .arrow { filter:none; }
+  /* One colour per objective kind, carried by both the pin and the edge
+     arrow, so an off-screen objective is recognisable before you turn. */
+  .zone   { --accent: #c2ad6d; }
+  .plant  { --accent: #86b96a; }
+  .beacon { --accent: #b699e0; }
+  .flare  { --accent: #e0a35c; }
+  .item   { --accent: #8fc7f2; }
+  body { margin:0; overflow:hidden; font-family:var(--font); }
+  /* Opacity is always an inline style - distance dimming and hiding must
+     use the same mechanism, or the inline value silently wins. */
+  /* Anchored by the pin's tip: the box is exactly as tall as the rotated
+     teardrop, the label hangs below it, and scaling happens around the tip
+     so a shrinking marker keeps pointing at the same spot. */
+  /* Crisp text is a matter of whole pixels: the marker box is moved by
+     integer translations only, the label is centred by layout rather than
+     by a -50% transform (half a pixel on every odd width), and size comes
+     from scaling the vector pin and from integer font sizes - never from
+     scaling text. */
+  .marker { position:absolute; left:0; top:0; width:26px; height:31px;
+            will-change:transform,opacity; transform:translate(-50%,-100%);
+            pointer-events:none; opacity:0; transition:opacity .25s; }
+  /* A teardrop whose tip marks the exact spot; the icon inside is
+     counter-rotated so it stays upright. Placed so that its un-rotated
+     bottom-left corner - the tip - sits at the bottom centre of the marker
+     box, and both the rotation and the size scaling pivot on that corner,
+     so a scaled pin keeps pointing at the same spot. */
+  .pin { position:absolute; top:3px; left:13px; display:flex;
+         align-items:center; justify-content:center; width:26px; height:26px;
+         background:var(--ink); border:1px solid var(--accent); border-radius:50% 50% 50% 0;
+         transform-origin:0 100%; transform:rotate(-45deg);
+         box-shadow:0 2px 12px rgba(0,0,0,0.7); }
+  .pin svg { transform:rotate(45deg); width:15px; height:15px;
+             color:var(--accent); stroke:currentColor; fill:none;
+             stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+  /* The tag's font size and its gap below the tip follow the pin's scale
+     (set per frame), so the whole marker grows and shrinks together; only
+     the quest name may be shortened, the distance always stays. */
+  .tagbox { position:absolute; top:38px; left:-107px; width:240px;
+            display:flex; justify-content:center; }
+  .tag { padding:2px 8px; background:var(--ink);
+         border:1px solid var(--border); border-radius:4px;
+         color:var(--text); font-size:12px; white-space:nowrap;
+         box-shadow:0 2px 8px rgba(0,0,0,0.5); }
+  .label { display:inline-block; max-width:16em; overflow:hidden;
+           text-overflow:ellipsis; white-space:nowrap; vertical-align:bottom; }
+  .dist { color:var(--dim); font-variant-numeric:tabular-nums; margin-left:6px; }
+  /* A fixed box, centred on the clamped point by an integer translation
+     (the box is 120x60, so the offset is -60,-30); wide enough that the
+     distance never wraps even at the largest marker size. */
+  .edge { position:absolute; left:0; top:0; width:120px; height:60px;
+          will-change:transform,opacity; pointer-events:none; opacity:0;
+          transition:opacity .25s;
+          display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .edge .arrow { width:0; height:0; border-left:8px solid transparent;
+                 border-right:8px solid transparent; border-bottom:14px solid var(--accent);
+                 filter:drop-shadow(0 1px 3px rgba(0,0,0,0.7)); }
+  .edge .dist { margin:2px 0 0; font-size:11px; background:var(--ink);
+                padding:1px 5px; border-radius:3px; white-space:nowrap; }
+</style>
+<div id='layer'></div>
+<script>
+(function () {
+  'use strict';
+  const layer = document.getElementById('layer');
+  const cfg = { labels: true, distance: true, edge: true,
+                scale: 1, farScale: 0.8, farDistance: 250 };
+  const svg = body => "<svg viewBox='0 0 24 24'>" + body + "</svg>";
+  const icons = {
+    zone: svg("<path d='M6 21V3.5'/><path d='M6 4.5h11l-2.5 3.5L17 11.5H6z'"
+      + " fill='currentColor' fill-opacity='.25'/>"),
+    plant: svg("<path d='M12 3v8.5'/><path d='M8 8l4 4 4-4'/>"
+      + "<path d='M4 14.5V20h16v-5.5'/>"),
+    beacon: svg("<circle cx='12' cy='7' r='2'/><path d='M12 10.5V20'/><path d='M8 20h8'/>"
+      + "<path d='M7.6 11.2a6 6 0 0 1 0-8.4'/><path d='M16.4 2.8a6 6 0 0 1 0 8.4'/>"),
+    flare: svg("<circle cx='12' cy='12' r='3.2' fill='currentColor' fill-opacity='.25'/>"
+      + "<path d='M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3'/>"
+      + "<path d='M5.4 5.4l2.1 2.1M16.5 16.5l2.1 2.1M18.6 5.4l-2.1 2.1M7.5 16.5l-2.1 2.1'/>"),
+    item: svg("<rect x='3.5' y='7.5' width='17' height='12' rx='1.5'/>"
+      + "<path d='M9 7.5V6a3 3 0 0 1 6 0v1.5'/><path d='M3.5 12.5h17'/>"),
+  };
+  const known = new Map();
+  let generation = 0;
+
+  function entryFor(id, kind) {
+    let entry = known.get(id);
+    if (entry)
+      return entry;
+    const shape = icons[kind] ? kind : 'zone';
+    const marker = document.createElement('div');
+    marker.className = 'marker ' + shape;
+    marker.innerHTML = "<div class='pin'>" + icons[shape] + "</div>"
+      + "<div class='tagbox'><div class='tag'><span class='label'></span><span class='dist'></span></div></div>";
+    const edge = document.createElement('div');
+    edge.className = 'edge ' + shape;
+    edge.innerHTML = "<div class='arrow'></div><div class='dist'></div>";
+    layer.appendChild(marker);
+    layer.appendChild(edge);
+    entry = {
+      marker, edge, generation: 0, z: 0, fontPx: 0, gapPx: 0, edgeFontPx: 0,
+      pin: marker.querySelector('.pin'),
+      label: marker.querySelector('.label'),
+      tagbox: marker.querySelector('.tagbox'),
+      tag: marker.querySelector('.tag'),
+      markerDist: marker.querySelector('.tag .dist'),
+      edgeDist: edge.querySelector('.dist'),
+      arrow: edge.querySelector('.arrow'),
+    };
+    known.set(id, entry);
+    return entry;
+  }
+
+  function formatDistance(meters) {
+    return meters >= 1000 ? (meters / 1000).toFixed(1) + ' km' : Math.round(meters) + ' m';
+  }
+
+  function update(targets) {
+    generation++;
+    const w = window.innerWidth, h = window.innerHeight;
+    const edgePx = Math.max(9, Math.round(11 * cfg.scale));
+    for (const t of targets) {
+      const entry = entryFor(t.i, t.k);
+      entry.generation = generation;
+      const z = Math.max(1, 100000 - Math.round(t.d));
+      if (entry.z !== z) {
+        entry.marker.style.zIndex = z;
+        entry.edge.style.zIndex = z;
+        entry.z = z;
+      }
+      const onScreen = !t.b && t.x >= 0 && t.x <= 1 && t.y >= 0 && t.y <= 1;
+      if (onScreen) {
+        const near = Math.min(1, Math.max(0, t.d / cfg.farDistance));
+        const scale = cfg.scale * (1 - near * (1 - cfg.farScale));
+        entry.marker.style.transform = 'translate(-50%,-100%) translate('
+          + Math.round(t.x * w) + 'px,' + Math.round(t.y * h) + 'px)';
+        entry.pin.style.transform = 'rotate(-45deg) scale(' + scale.toFixed(3) + ')';
+        entry.marker.style.opacity = Math.max(0.85, 1 - t.d / 4000).toFixed(2);
+        entry.edge.style.opacity = '0';
+        const labelPx = Math.max(9, Math.round(12 * scale));
+        if (entry.fontPx !== labelPx) {
+          entry.tag.style.fontSize = labelPx + 'px';
+          entry.fontPx = labelPx;
+        }
+        const gapPx = 31 + Math.round(7 * scale);
+        if (entry.gapPx !== gapPx) {
+          entry.tagbox.style.top = gapPx + 'px';
+          entry.gapPx = gapPx;
+        }
+        entry.label.textContent = cfg.labels ? t.l : '';
+        entry.markerDist.textContent = cfg.distance ? formatDistance(t.d) : '';
+        entry.tag.style.display = (cfg.labels || cfg.distance) ? '' : 'none';
+      } else {
+        entry.marker.style.opacity = '0';
+        if (!cfg.edge) {
+          entry.edge.style.opacity = '0';
+          continue;
+        }
+        const dx = t.x - 0.5, dy = t.y - 0.5;
+        const m = Math.max(Math.abs(dx) / 0.46, Math.abs(dy) / 0.44, 1e-6);
+        const ex = Math.round((0.5 + dx / m) * w) - 60, ey = Math.round((0.5 + dy / m) * h) - 30;
+        const angle = Math.atan2(dy, dx) * 180 / Math.PI + 90;
+        entry.edge.style.transform = 'translate(' + ex + 'px,' + ey + 'px)';
+        entry.arrow.style.transform = 'rotate(' + angle.toFixed(1) + 'deg) scale(' + cfg.scale.toFixed(2) + ')';
+        if (entry.edgeFontPx !== edgePx) {
+          entry.edgeDist.style.fontSize = edgePx + 'px';
+          entry.edgeFontPx = edgePx;
+        }
+        entry.edgeDist.textContent = cfg.distance ? formatDistance(t.d) : '';
+        entry.edgeDist.style.display = cfg.distance ? '' : 'none';
+        entry.edge.style.opacity = '1';
+      }
+    }
+    for (const [id, entry] of known) {
+      if (entry.generation !== generation) {
+        entry.marker.style.opacity = '0';
+        entry.edge.style.opacity = '0';
+        if (generation - entry.generation > 600) {
+          entry.marker.remove();
+          entry.edge.remove();
+          known.delete(id);
+        }
+      }
+    }
+  }
+  overlay.on('markers', payload => {
+    try { update(JSON.parse(payload) || []); } catch (_) { /* skip bad frame */ }
+  }, { latest: true });
+  overlay.on('cfg', payload => {
+    try { Object.assign(cfg, JSON.parse(payload)); } catch (_) { }
+  });
+})();
+</script>

@@ -1,0 +1,1 @@
+Shows where your quest objectives are: markers in the world with quest name and distance, on F6.
