@@ -8,11 +8,14 @@
 
   x/y are viewport coordinates with a CSS top-left origin; b=1 means the
   target is behind the camera (x/y already mirrored). d is meters, k the
-  objective kind (zone|plant|beacon|flare|item, each with its own icon and
-  colour), l the quest caption. Marker elements are keyed by i and
-  reused between frames; targets missing from a frame fade out. On-screen
-  targets get an icon with label and distance, off-screen ones an arrow
-  clamped to the border pointing toward them.
+  objective kind (zone|plant|beacon|flare|item|exit|extract, each with its
+  own icon and colour), l the quest caption - for an extract, its name - and
+  s open|locked|countdown from the game's exfil status, on extracts and on a
+  quest exit that is one of the player's extracts too; absent otherwise.
+  Marker elements are keyed by i and reused between frames; targets missing
+  from a frame fade out. On-screen targets get an icon with label and
+  distance, off-screen ones an arrow clamped to the border pointing toward
+  them.
 
   Frames are posted latest-only and consumed with { latest: true }, so a slow
   moment never leaves a backlog of stale positions to render. The "cfg"
@@ -20,12 +23,18 @@
   document gets them again, and resent whenever one of them changes:
 
     {"labels":true,"distance":true,"edge":true,
-     "scale":1,"farScale":0.8,"farDistance":250}
+     "scale":1,"farScale":0.8,"farDistance":250,"gameFont":true}
+
+  gameFont switches the labels to the bundled display face (Chakra Petch);
+  without it they use the shared theme font.
 
   scale is the overall marker size; a marker shrinks linearly from scale at
   arm's length to scale*farScale at farDistance meters and stays there.
 -->
 <style>
+  /* Replaced with the bundled display face when this build carries it;
+     empty otherwise, and the labels then use the shared theme font. */
+  /*!FONT_FACE!*/
   /* The library's shared palette when it is injected (InjectTheme), the
      same values as fallback when the page is opened without it. */
   :root {
@@ -36,7 +45,8 @@
     --text: var(--wo-text, #d0cdbd);
     --dim: var(--wo-dim, #918e7e);
     --border: rgba(194,173,109,0.55);
-    --font: var(--wo-font, 'Segoe UI',system-ui,sans-serif);
+    --stock-font: var(--wo-font, 'Segoe UI',system-ui,sans-serif);
+    --font: var(--stock-font);
   }
   /* The chroma-key fallback blends translucent pixels towards black, not
      towards the game: solid panels and no shadows there. */
@@ -49,6 +59,32 @@
   .beacon { --accent: #b699e0; }
   .flare  { --accent: #e0a35c; }
   .item   { --accent: #8fc7f2; }
+  .exit   { --accent: #e0888a; }
+  /* The player's own extracts: a diamond instead of a teardrop - the same
+     rotated box with square corners, so the tip still lands on the spot -
+     and a colour that tells the state at a glance. The state comes from the
+     game's own exfil status and changes during the raid, so it is a data
+     attribute set per frame rather than a class fixed at creation. */
+  .extract { --accent: #5fd068; }
+  .extract .pin { border-radius:4px; }
+  .extract[data-state="open"]      { --accent: #5fd068; }
+  .extract[data-state="locked"]    { --accent: #9a9a8e; }
+  .extract[data-state="countdown"] { --accent: #f0b429; }
+  /* Not confirmed open: waiting on a switch, a car or a train, or left to
+     its chance. A quest exit that is one of your extracts too keeps its
+     own colour and door and shows the state by the same cues. */
+  .extract[data-state="locked"] .pin,
+  .exit[data-state="locked"] .pin { border-style:dashed; }
+  .extract[data-state="locked"] .pin svg,
+  .exit[data-state="locked"] .pin svg { opacity:.55; }
+  /* Leaving soon. The glow pulses through box-shadow, never opacity - the
+     marker's opacity belongs to distance dimming and hiding. */
+  @keyframes qm-pulse {
+    0%, 100% { box-shadow:0 2px 12px rgba(0,0,0,.7), 0 0 0 0 rgba(240,180,41,.6); }
+    50%      { box-shadow:0 2px 12px rgba(0,0,0,.7), 0 0 12px 5px rgba(240,180,41,.6); }
+  }
+  .extract[data-state="countdown"] .pin,
+  .exit[data-state="countdown"] .pin { animation:qm-pulse 1.1s ease-in-out infinite; }
   body { margin:0; overflow:hidden; font-family:var(--font); }
   /* Opacity is always an inline style - distance dimming and hiding must
      use the same mechanism, or the inline value silently wins. */
@@ -107,7 +143,7 @@
   'use strict';
   const layer = document.getElementById('layer');
   const cfg = { labels: true, distance: true, edge: true,
-                scale: 1, farScale: 0.8, farDistance: 250 };
+                scale: 1, farScale: 0.8, farDistance: 250, gameFont: true };
   const svg = body => "<svg viewBox='0 0 24 24'>" + body + "</svg>";
   const icons = {
     zone: svg("<path d='M6 21V3.5'/><path d='M6 4.5h11l-2.5 3.5L17 11.5H6z'"
@@ -121,6 +157,9 @@
       + "<path d='M5.4 5.4l2.1 2.1M16.5 16.5l2.1 2.1M18.6 5.4l-2.1 2.1M7.5 16.5l-2.1 2.1'/>"),
     item: svg("<rect x='3.5' y='7.5' width='17' height='12' rx='1.5'/>"
       + "<path d='M9 7.5V6a3 3 0 0 1 6 0v1.5'/><path d='M3.5 12.5h17'/>"),
+    extract: svg("<path d='M5.5 6l6 6-6 6'/><path d='M12.5 6l6 6-6 6'/>"),
+    exit: svg("<path d='M13 3.5H5.5v17H13'/><path d='M10.5 12h9'/>"
+      + "<path d='M16.5 8.5 20 12l-3.5 3.5'/>"),
   };
   const known = new Map();
   let generation = 0;
@@ -140,7 +179,7 @@
     layer.appendChild(marker);
     layer.appendChild(edge);
     entry = {
-      marker, edge, generation: 0, z: 0, fontPx: 0, gapPx: 0, edgeFontPx: 0,
+      marker, edge, generation: 0, z: 0, state: '', fontPx: 0, gapPx: 0, edgeFontPx: 0,
       pin: marker.querySelector('.pin'),
       label: marker.querySelector('.label'),
       tagbox: marker.querySelector('.tagbox'),
@@ -164,6 +203,17 @@
     for (const t of targets) {
       const entry = entryFor(t.i, t.k);
       entry.generation = generation;
+      const state = t.s || '';
+      if (entry.state !== state) {
+        if (state) {
+          entry.marker.dataset.state = state;
+          entry.edge.dataset.state = state;
+        } else {
+          delete entry.marker.dataset.state;
+          delete entry.edge.dataset.state;
+        }
+        entry.state = state;
+      }
       const z = Math.max(1, 100000 - Math.round(t.d));
       if (entry.z !== z) {
         entry.marker.style.zIndex = z;
@@ -230,6 +280,8 @@
   }, { latest: true });
   overlay.on('cfg', payload => {
     try { Object.assign(cfg, JSON.parse(payload)); } catch (_) { }
+    document.documentElement.style.setProperty('--font',
+      cfg.gameFont ? "'QuestMarkers', var(--stock-font)" : 'var(--stock-font)');
   });
 })();
 </script>

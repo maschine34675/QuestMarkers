@@ -1,1 +1,1 @@
-Shows where your quest objectives are: markers in the world with quest name and distance, on F6.
+Quest objectives and your extracts as markers in the world, with name and distance, on one key.

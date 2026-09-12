@@ -23,7 +23,10 @@ namespace QuestMarkers
         private int zoneScanAttempts;
         private int scannedSceneCount = -1;
         private readonly HashSet<string> reportedCategoryConditions = new HashSet<string>(StringComparer.Ordinal);
+        private readonly List<(string name, int index)> questExits = new List<(string, int)>();
         private bool warnedThisRaid;
+        public bool ShowQuests = true;
+        public bool ShowExtracts;
 
         public QuestTargetScanner(Action<string> logDebug, Action<string> logWarning)
         {
@@ -49,6 +52,20 @@ namespace QuestMarkers
             }
         }
         public Camera Camera => CameraManager.Exist ? CameraManager.Instance.Camera : null;
+        public bool InBattleUi
+        {
+            get
+            {
+                try
+                {
+                    return EftScreenManager.Instance.CheckCurrentScreen(EEftScreenType.BattleUI);
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+        }
         public bool ShouldShowMarkers
         {
             get
@@ -60,7 +77,7 @@ namespace QuestMarkers
                 {
                     if (player.HealthController == null || !player.HealthController.IsAlive)
                         return false;
-                    if (!EftScreenManager.Instance.CheckCurrentScreen(EEftScreenType.BattleUI))
+                    if (!InBattleUi)
                         return false;
                     if (player.HandsController is Player.FirearmController firearms
                         && firearms.IsAiming
@@ -90,37 +107,20 @@ namespace QuestMarkers
         {
             targets.Clear();
             wantedItems.Clear();
+            questExits.Clear();
             try
             {
                 GameWorld world = Singleton<GameWorld>.Instance;
                 Player player = world?.MainPlayer;
                 if (player == null)
                     return;
-                if (player.Side == EPlayerSide.Savage)
-                    return;
-
-                QuestController questController = player.QuestController as QuestController;
-                if (questController?.Quests == null)
-                    return;
-
-                if (!zonesScanned || SceneManager.sceneCount != scannedSceneCount)
-                    scanZones();
-
-                foreach (Quest quest in questController.Quests)
+                if (ShowQuests && player.Side != EPlayerSide.Savage)
                 {
-                    if (quest?.QuestStatus != EQuestStatus.Started
-                        && quest?.QuestStatus != EQuestStatus.AvailableForFinish)
-                        continue;
-                    if (quest.Conditions == null
-                        || !quest.Conditions.TryGetValue(EQuestStatus.AvailableForFinish, out ConditionCollection conditions)
-                        || conditions == null)
-                        continue;
-                    string label = escape(quest.Template?.Name ?? "Quest");
-                    foreach (Condition condition in conditions)
-                        addCondition(quest, condition, label);
+                    addQuestObjectives(player);
+                    addQuestItems(world, player);
                 }
-
-                addQuestItems(world, player);
+                if (ShowExtracts)
+                    addExtracts(world, player);
             }
             catch (Exception ex)
             {
@@ -130,6 +130,30 @@ namespace QuestMarkers
                     warnedThisRaid = true;
                     logWarning("Quest scan failed this raid (" + ex.GetType().Name + ": " + ex.Message + ").");
                 }
+            }
+        }
+
+        private void addQuestObjectives(Player player)
+        {
+            QuestController questController = player.QuestController as QuestController;
+            if (questController?.Quests == null)
+                return;
+
+            if (!zonesScanned || SceneManager.sceneCount != scannedSceneCount)
+                scanZones();
+
+            foreach (Quest quest in questController.Quests)
+            {
+                if (quest?.QuestStatus != EQuestStatus.Started
+                    && quest?.QuestStatus != EQuestStatus.AvailableForFinish)
+                    continue;
+                if (quest.Conditions == null
+                    || !quest.Conditions.TryGetValue(EQuestStatus.AvailableForFinish, out ConditionCollection conditions)
+                    || conditions == null)
+                    continue;
+                string label = escape(quest.Template?.Name ?? "Quest");
+                foreach (Condition condition in conditions)
+                    addCondition(quest, condition, label);
             }
         }
 
@@ -165,6 +189,9 @@ namespace QuestMarkers
                         if (inZone.zoneIds != null)
                             foreach (string id in inZone.zoneIds)
                                 addZone(condition, id, label, "zone");
+                        break;
+                    case ConditionExitName exit:
+                        addExit(condition, exit.exitName, label);
                         break;
                     case ConditionFindItem find:
                         if (find.target == null)
@@ -231,6 +258,130 @@ namespace QuestMarkers
                 Label = label,
                 Kind = escape(kind),
             });
+        }
+        private void addExit(Condition condition, string exitName, string label)
+        {
+            if (string.IsNullOrEmpty(exitName))
+                return;
+            var controller = Singleton<GameWorld>.Instance?.ExfiltrationController;
+            if (controller?.ExfiltrationPoints == null)
+                return;
+            foreach (ExfiltrationPoint point in controller.ExfiltrationPoints)
+            {
+                if (point == null || point.Settings == null || point.Settings.Name != exitName)
+                    continue;
+                questExits.Add((exitName, targets.Count));
+                targets.Add(new MarkerTarget
+                {
+                    Id = escape("x:" + condition.id + ":" + exitName),
+                    Position = boundsFor(point).center,
+                    Label = label,
+                    Kind = "exit",
+                });
+            }
+        }
+        private void addExtracts(GameWorld world, Player player)
+        {
+            var controller = world.ExfiltrationController;
+            if (controller == null || player.Profile == null)
+                return;
+            if (controller.IsMyPlayerBanned())
+                return;
+            if (player.Side == EPlayerSide.Savage)
+            {
+                addScavExtracts(controller.ScavExfiltrationPoints,
+                    controller.GetScavSecretExits(), player.ProfileId);
+                return;
+            }
+            ExfiltrationPoint[] eligible = controller.EligiblePoints(player.Profile);
+            if (eligible != null)
+                foreach (ExfiltrationPoint point in eligible)
+                    addExtract(point);
+            var secret = controller.SecretEligiblePoints();
+            if (secret != null)
+                foreach (ExfiltrationPoint point in secret)
+                    addExtract(point);
+        }
+        private void addScavExtracts(ScavExfiltrationPoint[] claimed, ExfiltrationPoint[] secret, string profileId)
+        {
+            if (claimed != null)
+            {
+                foreach (ScavExfiltrationPoint point in claimed)
+                {
+                    if (point == null || point.EligibleIds == null
+                        || !point.EligibleIds.Contains(profileId))
+                        continue;
+                    addExtract(point);
+                }
+            }
+            if (secret == null)
+                return;
+            foreach (ExfiltrationPoint point in secret)
+                addExtract(point);
+        }
+
+        private void addExtract(ExfiltrationPoint point)
+        {
+            if (point == null || point.Settings == null || string.IsNullOrEmpty(point.Settings.Name))
+                return;
+            string state = stateOf(point);
+            if (state == null)
+                return;
+            string name = point.Settings.Name;
+            bool lent = false;
+            for (int i = 0; i < questExits.Count; i++)
+            {
+                if (questExits[i].name != name)
+                    continue;
+                MarkerTarget quest = targets[questExits[i].index];
+                quest.State = state;
+                targets[questExits[i].index] = quest;
+                lent = true;
+            }
+            if (lent)
+                return;
+            targets.Add(new MarkerTarget
+            {
+                Id = escape("e:" + name),
+                Position = boundsFor(point).center,
+                Label = escape(name.Localized()),
+                Kind = "extract",
+                State = state,
+            });
+        }
+        private static string stateOf(ExfiltrationPoint point)
+        {
+            EExfiltrationStatus status = point.Status;
+            if (status == EExfiltrationStatus.Countdown)
+                return "countdown";
+            if (isRolled(point) && point.Settings.Chance < 100f)
+                return "locked";
+            switch (status)
+            {
+                case EExfiltrationStatus.RegularMode:
+                case EExfiltrationStatus.AwaitsManualActivation:
+                    return needsScav(point) ? "locked" : "open";
+                case EExfiltrationStatus.UncompleteRequirements:
+                case EExfiltrationStatus.Pending:
+                    return "locked";
+                default:
+                    return null;
+            }
+        }
+        private static bool isRolled(ExfiltrationPoint point)
+        {
+            return !(point is ScavExfiltrationPoint) || point is SharedExfiltrationPoint;
+        }
+
+        private static bool needsScav(ExfiltrationPoint point)
+        {
+            ExfiltrationRequirement[] requirements = point.Requirements;
+            if (requirements == null)
+                return false;
+            foreach (ExfiltrationRequirement requirement in requirements)
+                if (requirement != null && requirement.Requirement == ERequirementState.ScavCooperation)
+                    return true;
+            return false;
         }
 
         private void addQuestItems(GameWorld world, Player player)
@@ -311,7 +462,7 @@ namespace QuestMarkers
             return sb.ToString();
         }
 
-        private static Bounds boundsFor(TriggerWithId trigger)
+        private static Bounds boundsFor(Component trigger)
         {
             var bounds = new Bounds(trigger.transform.position, Vector3.zero);
             if (!trigger.gameObject.activeInHierarchy)

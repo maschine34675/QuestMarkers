@@ -14,6 +14,7 @@ namespace QuestMarkers
         public Vector3 Position;
         public string Label;
         public string Kind;
+        public string State;
     }
     internal sealed class MarkerHud : IDisposable
     {
@@ -30,12 +31,14 @@ namespace QuestMarkers
         public float Scale = 1f;
         public float FarScale = 0.8f;
         public float FarDistance = 250f;
+        public bool GameFont;
         private bool sentLabels;
         private bool sentDistance;
         private bool sentEdge;
         private float sentScale;
         private float sentFarScale;
         private float sentFarDistance;
+        private bool sentGameFont;
 
         public MarkerHud(Action<string> logWarning)
         {
@@ -125,7 +128,8 @@ namespace QuestMarkers
                 return;
             }
             if (Labels != sentLabels || Distance != sentDistance || EdgeIndicators != sentEdge
-                || Scale != sentScale || FarScale != sentFarScale || FarDistance != sentFarDistance)
+                || Scale != sentScale || FarScale != sentFarScale || FarDistance != sentFarDistance
+                || GameFont != sentGameFont)
                 pushConfig();
 
             Vector3 origin = camera.transform.position;
@@ -142,13 +146,20 @@ namespace QuestMarkers
                 visible.Add((targets[i], viewport, distance));
             }
             visible.Sort((a, b) => a.distance.CompareTo(b.distance));
-            int count = Mathf.Min(visible.Count, maxMarkers);
+            int questShown = 0;
 
             json.Length = 0;
             json.Append('[');
-            for (int i = 0; i < count; i++)
+            bool first = true;
+            for (int i = 0; i < visible.Count; i++)
             {
                 (MarkerTarget item, Vector3 viewport, float distance) = visible[i];
+                if (item.State == null)
+                {
+                    if (questShown >= maxMarkers)
+                        continue;
+                    questShown++;
+                }
                 float x = viewport.x;
                 float y = 1f - viewport.y;
                 bool behind = viewport.z < 0f;
@@ -157,16 +168,19 @@ namespace QuestMarkers
                     x = 1f - x;
                     y = 1f - y;
                 }
-                if (i > 0)
+                if (!first)
                     json.Append(',');
+                first = false;
                 json.Append("{\"i\":\"").Append(item.Id)
                     .Append("\",\"x\":").Append(x.ToString("F4", CultureInfo.InvariantCulture))
                     .Append(",\"y\":").Append(y.ToString("F4", CultureInfo.InvariantCulture))
                     .Append(",\"b\":").Append(behind ? '1' : '0')
                     .Append(",\"d\":").Append((int)distance)
                     .Append(",\"k\":\"").Append(item.Kind)
-                    .Append("\",\"l\":\"").Append(item.Label)
-                    .Append("\"}");
+                    .Append("\",\"l\":\"").Append(item.Label).Append('"');
+                if (item.State != null)
+                    json.Append(",\"s\":\"").Append(item.State).Append('"');
+                json.Append('}');
             }
             json.Append(']');
             target.Post("markers", json.ToString(), PostOptions.LatestOnly);
@@ -183,12 +197,14 @@ namespace QuestMarkers
             sentScale = Scale;
             sentFarScale = FarScale;
             sentFarDistance = FarDistance;
+            sentGameFont = GameFont;
             target.Post("cfg", "{\"labels\":" + (Labels ? "true" : "false")
                 + ",\"distance\":" + (Distance ? "true" : "false")
                 + ",\"edge\":" + (EdgeIndicators ? "true" : "false")
                 + ",\"scale\":" + Scale.ToString("F2", CultureInfo.InvariantCulture)
                 + ",\"farScale\":" + FarScale.ToString("F2", CultureInfo.InvariantCulture)
-                + ",\"farDistance\":" + FarDistance.ToString("F1", CultureInfo.InvariantCulture) + "}",
+                + ",\"farDistance\":" + FarDistance.ToString("F1", CultureInfo.InvariantCulture)
+                + ",\"gameFont\":" + (GameFont ? "true" : "false") + "}",
                 PostOptions.Retain);
         }
 
@@ -199,7 +215,22 @@ namespace QuestMarkers
                 if (stream == null)
                     throw new FileNotFoundException("embedded resource QuestMarkers.markers.html");
                 using (var reader = new StreamReader(stream, Encoding.UTF8))
-                    return reader.ReadToEnd();
+                    return reader.ReadToEnd().Replace("/*!FONT_FACE!*/", fontFace());
+            }
+        }
+        private static string fontFace()
+        {
+            using (Stream stream = typeof(MarkerHud).Assembly.GetManifestResourceStream("QuestMarkers.font.ttf"))
+            {
+                if (stream == null)
+                    return "";
+                using (var memory = new MemoryStream())
+                {
+                    stream.CopyTo(memory);
+                    return "@font-face{font-family:'QuestMarkers';font-style:normal;font-weight:400;"
+                        + "src:url(data:font/ttf;base64," + Convert.ToBase64String(memory.ToArray())
+                        + ") format('truetype');}";
+                }
             }
         }
 
