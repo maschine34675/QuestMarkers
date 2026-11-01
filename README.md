@@ -3,7 +3,8 @@
 World-anchored HUD markers for your unfinished quest objectives: zones to
 visit, spots to place items or beacons at, and quest items lying in the raid.
 No more running circles around a vague quest description - the marker floats
-where the objective is, with the quest name and the distance.
+where the objective is, with the quest name and the distance. Your extracts,
+airdrops and the BTR can be marked too.
 
 ## Main features
 
@@ -31,8 +32,14 @@ where the objective is, with the quest name and the distance.
   markers never give away. An extract a quest sends you to keeps its rose
   quest pin and shows the same state on it. Secret exits appear only once
   you have found them. Playing a scav you get the exits that raid claimed
-  for you, the same ones its panel lists. Turn *Show quest markers* off and
-  the extracts are all that is left.
+  for you, the same ones its panel lists. The second key shows them alone
+  out of the box, so the extracts can have a key of their own.
+- **Airdrops and the BTR, followed live.** Both get a round marker - a third
+  shape, so a moving thing never passes for a quest pin or an extract - that
+  rides along with them: a cyan parachute on each airdrop crate from the
+  moment it leaves the plane, all the way down and after it has landed, and a
+  red armoured car on the BTR while it is out on its route on Woods and
+  Streets.
 - **Honest when the picture lies.** While aiming through a magnified optic
   (whose lens renders its own camera) the markers fade out instead of
   pointing at wrong pixels. A scav gets extract markers but no quest
@@ -64,15 +71,23 @@ Quest Tracker mod's panel key, so with both installed one press gives you
 the list and the markers at once. Set *Auto-hide after* to 0 if you would
 rather have them stay until you toggle them off.
 
+Each key has its own checklist of what it shows - Quests, Extracts,
+Airdrops, BTR - ticked right in the F12 settings menu. The toggle key shows
+all four out of the box; a second key, not bound until you pick one, shows
+the extracts alone. Pressing the other key while markers are up switches to
+its list, and the same key again hides them. The automatic peek at raid
+start uses the toggle key's list.
+
 The options below are named as the F12 settings menu shows them; the keys in
 `BepInEx/config/com.maschine.QuestMarkers.cfg` keep their own spelling.
 
 | Section | Option | Default | Meaning |
 |---|---|---|---|
-| General | Toggle Key | I | Show or hide the markers during a raid. |
-| General | Show At Raid Start | on | Show the markers whenever a raid starts. |
-| Filter | Show Quest Markers | on | Mark the objectives of your started quests. Off keeps only the extract markers. |
-| Filter | Show My Extracts | on | Also mark the extracts this raid gives you - as a scav, the ones claimed for you - with their open, locked or countdown state. |
+| General | Toggle Key | I | Show or hide the markers ticked in the list below during a raid. |
+| General | Toggle Key Shows | Quests, Extracts, Airdrops, BTR | What the toggle key marks, and what appears on its own at raid start. |
+| General | Second Key | not set | A second key with its own list. |
+| General | Second Key Shows | Extracts | What the second key marks. |
+| General | Show At Raid Start | on | Show the toggle key's markers whenever a raid starts. |
 | Filter | Maximum Quest Markers | 16 | At most this many quest markers at once; the closest objectives win. Extracts do not count. |
 | Filter | Maximum Distance (m) | 0 (unlimited) | Hide markers farther away than this many meters, extracts included. |
 | Display | Show Quest Names | on | Print the quest name under each marker. |
@@ -103,6 +118,11 @@ The options below are named as the F12 settings menu shows them; the keys in
   until a scav and a PMC start its countdown together. While you are committed
   to a transit, the extract markers are gone, as the game closes every exit
   to you then.
+- An airdrop crate stays marked after it has been opened - the game gives no
+  reliable sign that a crate is empty. The BTR is marked only while it is out
+  on its route, not while it waits at its depot before setting out, and not
+  after its route is done; nor while you ride in it. Both markers are
+  labelled in English, as the game has no on-screen name of its own for them.
 - Quest items inside containers are only known to the game once the
   container has been opened, so their marker can appear late.
 - Driver-level frame generation (AMD Fluid Motion Frames, Lossless Scaling,

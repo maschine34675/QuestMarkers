@@ -8,8 +8,9 @@
 
   x/y are viewport coordinates with a CSS top-left origin; b=1 means the
   target is behind the camera (x/y already mirrored). d is meters, k the
-  objective kind (zone|plant|beacon|flare|item|exit|extract, each with its
-  own icon and colour), l the quest caption - for an extract, its name - and
+  objective kind (zone|plant|beacon|flare|item|exit|extract|airdrop|btr,
+  each with its own icon and colour), l the quest caption - for an extract,
+  an airdrop or the BTR, its name - and
   s open|locked|countdown from the game's exfil status, on extracts and on a
   quest exit that is one of the player's extracts too; absent otherwise.
   Marker elements are keyed by i and reused between frames; targets missing
@@ -85,6 +86,13 @@
   }
   .extract[data-state="countdown"] .pin,
   .exit[data-state="countdown"] .pin { animation:qm-pulse 1.1s ease-in-out infinite; }
+  /* Things that move - an airdrop crate, the BTR - get a round marker, a
+     third shape next to the quest teardrop and the extract diamond, that
+     the mod moves along with them every frame. A circle has no tip, so the
+     script seats it on the spot (see roundSeat). */
+  .airdrop { --accent:#4cc3d9; }
+  .btr     { --accent:#e0604f; }
+  .airdrop .pin, .btr .pin { border-radius:50%; }
   body { margin:0; overflow:hidden; font-family:var(--font); }
   /* Opacity is always an inline style - distance dimming and hiding must
      use the same mechanism, or the inline value silently wins. */
@@ -158,9 +166,18 @@
     item: svg("<rect x='3.5' y='7.5' width='17' height='12' rx='1.5'/>"
       + "<path d='M9 7.5V6a3 3 0 0 1 6 0v1.5'/><path d='M3.5 12.5h17'/>"),
     extract: svg("<path d='M5.5 6l6 6-6 6'/><path d='M12.5 6l6 6-6 6'/>"),
+    airdrop: svg("<path d='M3.5 10a8.5 6.5 0 0 1 17 0z' fill='currentColor' fill-opacity='.25'/>"
+      + "<path d='M3.5 10l6 6.5M20.5 10l-6 6.5M12 10v6.5'/>"
+      + "<rect x='9' y='16.5' width='6' height='4.5' rx='.8'/>"),
+    btr: svg("<path d='M2.5 15.5h19l-1.6-4.2H15.2l-.9-2.3H9.7l-.9 2.3H4.1z'"
+      + " fill='currentColor' fill-opacity='.25'/><path d='M14.3 9H20.5'/>"
+      + "<circle cx='6.5' cy='18.6' r='1.7'/><circle cx='12' cy='18.6' r='1.7'/>"
+      + "<circle cx='17.5' cy='18.6' r='1.7'/>"),
     exit: svg("<path d='M13 3.5H5.5v17H13'/><path d='M10.5 12h9'/>"
       + "<path d='M16.5 8.5 20 12l-3.5 3.5'/>"),
   };
+  const roundKinds = new Set(['airdrop', 'btr']);
+  const roundSeat = ' translate(-3.81px,3.81px)';
   const known = new Map();
   let generation = 0;
 
@@ -180,6 +197,7 @@
     layer.appendChild(edge);
     entry = {
       marker, edge, generation: 0, z: 0, state: '', fontPx: 0, gapPx: 0, edgeFontPx: 0,
+      seat: roundKinds.has(shape) ? roundSeat : '',
       pin: marker.querySelector('.pin'),
       label: marker.querySelector('.label'),
       tagbox: marker.querySelector('.tagbox'),
@@ -226,7 +244,7 @@
         const scale = cfg.scale * (1 - near * (1 - cfg.farScale));
         entry.marker.style.transform = 'translate(-50%,-100%) translate('
           + Math.round(t.x * w) + 'px,' + Math.round(t.y * h) + 'px)';
-        entry.pin.style.transform = 'rotate(-45deg) scale(' + scale.toFixed(3) + ')';
+        entry.pin.style.transform = 'rotate(-45deg) scale(' + scale.toFixed(3) + ')' + entry.seat;
         entry.marker.style.opacity = Math.max(0.85, 1 - t.d / 4000).toFixed(2);
         entry.edge.style.opacity = '0';
         const labelPx = Math.max(9, Math.round(12 * scale));

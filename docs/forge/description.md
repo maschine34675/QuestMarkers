@@ -21,8 +21,12 @@ screen border, and the markers fade out again so they never clutter the raid.
   give away. An extract a quest sends you to keeps its rose pin and shows the
   same state. Secret exits appear only once found, and as a scav you get the
   exits that raid claimed for you.
-- **Extracts only, if you like**: the quest markers have their own switch,
-  so the mod can be nothing but an extract compass.
+- **Airdrops and the BTR, followed live**: a round marker rides along with
+  every airdrop crate from the moment it leaves the plane, and with the BTR
+  while it is out on its route on Woods and Streets.
+- **Two keys, each with its own checklist**: tick in F12 what a key shows -
+  quests, extracts, airdrops, the BTR. The second key is not bound out of
+  the box and shows the extracts alone, so it can be your extract compass.
 - **A glance, not an overlay.** Six seconds per keypress (configurable, or
   keep them on), and the same peek automatically at raid start.
 - **Only what is still open**: completed conditions and picked-up quest items
@@ -36,8 +40,9 @@ Install [Anvil-WebOverlay](https://sp-mod.com/mod/2879/weboverlay) first,
 then extract this zip over your SPT folder (`BepInEx/plugins/maschine-QuestMarkers.dll`).
 Start a raid: the markers appear for six seconds, and I brings them back - the
 same key the Quest Tracker mod uses for its panel.
-Everything else - distance and marker limits, labels, arrows, auto-hide, size
-- is in the F12 configuration menu under *maschine-QuestMarkers*.
+Everything else - the second key and both keys' lists, distance and marker
+limits, labels, arrows, auto-hide, size - is in the F12 configuration menu
+under *maschine-QuestMarkers*.
 
 ## Requirements and compatibility
 

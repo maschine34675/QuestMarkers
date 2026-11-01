@@ -6,6 +6,7 @@ using EFT;
 using EFT.CameraControl;
 using EFT.Interactive;
 using EFT.Quests;
+using EFT.SynchronizableObjects;
 using EFT.UI.Screens;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -27,6 +28,8 @@ namespace QuestMarkers
         private bool warnedThisRaid;
         public bool ShowQuests = true;
         public bool ShowExtracts;
+        public bool ShowAirdrops;
+        public bool ShowBtr;
 
         public QuestTargetScanner(Action<string> logDebug, Action<string> logWarning)
         {
@@ -121,6 +124,10 @@ namespace QuestMarkers
                 }
                 if (ShowExtracts)
                     addExtracts(world, player);
+                if (ShowAirdrops)
+                    addAirdrops(world);
+                if (ShowBtr)
+                    addBtr(world, player);
             }
             catch (Exception ex)
             {
@@ -257,6 +264,7 @@ namespace QuestMarkers
                 Position = position,
                 Label = label,
                 Kind = escape(kind),
+                Quest = true,
             });
         }
         private void addExit(Condition condition, string exitName, string label)
@@ -277,6 +285,7 @@ namespace QuestMarkers
                     Position = boundsFor(point).center,
                     Label = label,
                     Kind = "exit",
+                    Quest = true,
                 });
             }
         }
@@ -383,6 +392,45 @@ namespace QuestMarkers
                     return true;
             return false;
         }
+        private void addAirdrops(GameWorld world)
+        {
+            var registry = world.SynchronizableObjectLogicProcessor;
+            if (registry == null)
+                return;
+            foreach (SynchronizableObject entry in registry.GetSynchronizableObjects())
+            {
+                if (!(entry is AirdropSynchronizableObject crate) || !crate.IsActive || !crate.IsInited)
+                    continue;
+                targets.Add(new MarkerTarget
+                {
+                    Id = "a:" + crate.ObjectId,
+                    Position = crate.transform.position,
+                    Anchor = crate.transform,
+                    Lift = 1.2f,
+                    Label = "Airdrop",
+                    Kind = "airdrop",
+                });
+            }
+        }
+        private void addBtr(GameWorld world, Player player)
+        {
+            var view = world.BtrController?.BtrView;
+            if (view == null || view.RouteState != EVehicleRouteState.OnRoute)
+                return;
+            EPlayerBtrState aboard = player.BtrState;
+            if (aboard == EPlayerBtrState.GoIn || aboard == EPlayerBtrState.Inside
+                || aboard == EPlayerBtrState.GoOut)
+                return;
+            targets.Add(new MarkerTarget
+            {
+                Id = "btr",
+                Position = view.transform.position,
+                Anchor = view.transform,
+                Lift = 3f,
+                Label = "BTR",
+                Kind = "btr",
+            });
+        }
 
         private void addQuestItems(GameWorld world, Player player)
         {
@@ -404,6 +452,7 @@ namespace QuestMarkers
                     Position = loot.transform.position,
                     Label = label,
                     Kind = "item",
+                    Quest = true,
                 });
             }
         }

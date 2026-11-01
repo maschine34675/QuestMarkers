@@ -1,15 +1,22 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
 using BepInEx;
 using BepInEx.Configuration;
 using UnityEngine;
 
 namespace QuestMarkers
 {
-    [BepInPlugin("com.maschine.QuestMarkers", "maschine-QuestMarkers", "1.3.0")]
+    [BepInPlugin("com.maschine.QuestMarkers", "maschine-QuestMarkers", "1.4.0")]
     [BepInDependency(WebOverlay.Branding.PluginGuid, WebOverlay.Branding.PluginVersion)]
     public class Plugin : BaseUnityPlugin
     {
         private ConfigEntry<bool> autoShow;
         private ConfigEntry<KeyboardShortcut> toggleKey;
+        private ConfigEntry<MarkerSet> toggleShows;
+        private ConfigEntry<KeyboardShortcut> secondKey;
+        private ConfigEntry<MarkerSet> secondShows;
         private ConfigEntry<float> maxDistance;
         private ConfigEntry<int> maxMarkers;
         private ConfigEntry<bool> showLabels;
@@ -20,8 +27,6 @@ namespace QuestMarkers
         private ConfigEntry<float> farScale;
         private ConfigEntry<float> farDistance;
         private ConfigEntry<bool> gameFont;
-        private ConfigEntry<bool> showQuests;
-        private ConfigEntry<bool> showExtracts;
 
         private MarkerHud hud;
         private QuestTargetScanner scanner;
@@ -29,17 +34,43 @@ namespace QuestMarkers
         private float nextScan;
         private float shownSeconds;
         private bool peeking;
+        private bool secondKeyPeek;
         private bool clearPending;
         private int pushedFrame = -1;
 
         private void Awake()
         {
+            Dictionary<ConfigDefinition, string> orphans = orphanedEntries(this.Config);
+            bool firstStart = orphans != null && !orphans.ContainsKey(toggleShowsDefinition);
+
+            toggleKey = this.Config.Bind("General", "Toggle key", new KeyboardShortcut(KeyCode.I),
+                Tagged("Toggle Key", 50,
+                    "Shows or hides the markers ticked below during a raid. I is also the Quest Tracker mod's panel key, so one press can do both."));
+            bool tookOver;
+            this.Config.SaveOnConfigSet = false;
+            try
+            {
+                toggleShows = this.Config.Bind(toggleShowsDefinition,
+                    MarkerSet.Quests | MarkerSet.Extracts | MarkerSet.Airdrops | MarkerSet.BTR,
+                    Tagged("Toggle Key Shows", 40,
+                        "What the toggle key marks, and what appears on its own when a raid starts. Quests: your open objectives. Extracts: the exits this raid gives you, with their state. Airdrops: crates, followed live. BTR: the BTR while it is out on its route."));
+                tookOver = takeOverOldSwitches(orphans, firstStart);
+            }
+            finally
+            {
+                this.Config.SaveOnConfigSet = true;
+            }
+            if (firstStart || tookOver)
+                this.Config.Save();
+            secondKey = this.Config.Bind("General", "Second key", KeyboardShortcut.Empty,
+                Tagged("Second Key", 30,
+                    "A second key with its own list below - out of the box the extracts alone. Not bound until you pick a key. Pressing the other key while markers are up switches to its list; the same key again hides them."));
+            secondShows = this.Config.Bind("General", "Second key shows", MarkerSet.Extracts,
+                Tagged("Second Key Shows", 20,
+                    "What the second key marks."));
             autoShow = this.Config.Bind("General", "Show in raid automatically", true,
                 Tagged("Show At Raid Start", 10,
-                    "Show the markers whenever a raid starts. The toggle key works either way."));
-            toggleKey = this.Config.Bind("General", "Toggle key", new KeyboardShortcut(KeyCode.I),
-                Tagged("Toggle Key", 20,
-                    "Shows or hides the markers during a raid. I is also the Quest Tracker mod's panel key, so one press can do both."));
+                    "Show the toggle key's markers whenever a raid starts. Both keys work either way."));
             maxDistance = this.Config.Bind("Filter", "Maximum distance", 0f,
                 Tagged("Maximum Distance (m)", 10,
                     "Hide markers farther away than this many meters, extracts included. 0 shows everything.",
@@ -48,12 +79,6 @@ namespace QuestMarkers
                 Tagged("Maximum Quest Markers", 20,
                     "At most this many quest markers at once; the closest objectives win. Extracts do not count towards this.",
                     new AcceptableValueRange<int>(1, 50)));
-            showQuests = this.Config.Bind("Filter", "Show quest markers", true,
-                Tagged("Show Quest Markers", 40,
-                    "Mark the objectives of your started quests. Turn this off to keep only the extract markers."));
-            showExtracts = this.Config.Bind("Filter", "Show my extracts", true,
-                Tagged("Show My Extracts", 30,
-                    "Also mark the extracts this raid gives you - the same list the game shows on the exfil panel, placed in the world. Green when open, amber and pulsing while a countdown runs, grey while not confirmed open: a switch, a car or a train still outstanding, or an exit left to chance, whose roll the markers never give away. Secret exits appear only once you have found them. As a scav you get the exits that raid claimed for you instead."));
             showLabels = this.Config.Bind("Display", "Show quest names", true,
                 Tagged("Show Quest Names", 80,
                     "Print the quest name under each marker."));
@@ -100,7 +125,7 @@ namespace QuestMarkers
                 {
                     hud.Show();
                     if (autoShow.Value)
-                        startPeek();
+                        startPeek(false);
                 }
                 else
                 {
@@ -112,12 +137,16 @@ namespace QuestMarkers
 
             if (!inRaid)
                 return;
-            if (scanner.InBattleUi && isPressed(toggleKey.Value))
+            if (scanner.InBattleUi)
             {
-                if (peeking)
-                    endPeek();
-                else
-                    startPeek();
+                bool first = isPressed(toggleKey.Value);
+                bool second = isPressed(secondKey.Value);
+                if (first && second)
+                    press(secondKey.Value.Modifiers.Count() > toggleKey.Value.Modifiers.Count());
+                else if (first)
+                    press(false);
+                else if (second)
+                    press(true);
             }
 
             if (!peeking || !hud.IsVisible)
@@ -135,8 +164,11 @@ namespace QuestMarkers
             if (Time.unscaledTime >= nextScan)
             {
                 nextScan = Time.unscaledTime + 2f;
-                scanner.ShowQuests = showQuests.Value;
-                scanner.ShowExtracts = showExtracts.Value;
+                MarkerSet shows = secondKeyPeek ? secondShows.Value : toggleShows.Value;
+                scanner.ShowQuests = (shows & MarkerSet.Quests) != 0;
+                scanner.ShowExtracts = (shows & MarkerSet.Extracts) != 0;
+                scanner.ShowAirdrops = (shows & MarkerSet.Airdrops) != 0;
+                scanner.ShowBtr = (shows & MarkerSet.BTR) != 0;
                 scanner.Refresh();
             }
 
@@ -148,9 +180,17 @@ namespace QuestMarkers
             hud.FarDistance = farDistance.Value;
             hud.GameFont = gameFont.Value;
         }
-
-        private void startPeek()
+        private void press(bool second)
         {
+            if (peeking && secondKeyPeek == second)
+                endPeek();
+            else
+                startPeek(second);
+        }
+
+        private void startPeek(bool second)
+        {
+            secondKeyPeek = second;
             peeking = true;
             shownSeconds = 0f;
             nextScan = 0f;
@@ -178,6 +218,52 @@ namespace QuestMarkers
 
         private static readonly MarkerTarget[] noTargets = new MarkerTarget[0];
 
+        private static readonly ConfigDefinition toggleShowsDefinition =
+            new ConfigDefinition("General", "Toggle key shows");
+        private static readonly (string key, MarkerSet shows)[] oldSwitches =
+        {
+            ("Show quest markers", MarkerSet.Quests),
+            ("Show my extracts", MarkerSet.Extracts),
+            ("Show airdrops", MarkerSet.Airdrops),
+            ("Show the BTR", MarkerSet.BTR),
+        };
+        private bool takeOverOldSwitches(Dictionary<ConfigDefinition, string> orphans, bool firstStart)
+        {
+            if (orphans == null)
+                return false;
+            MarkerSet shows = toggleShows.Value;
+            bool found = false;
+            foreach ((string key, MarkerSet covered) in oldSwitches)
+            {
+                var definition = new ConfigDefinition("Filter", key);
+                if (!orphans.TryGetValue(definition, out string text))
+                    continue;
+                found = true;
+                orphans.Remove(definition);
+                if (firstStart && bool.TryParse(text.Trim(), out bool on) && !on)
+                    shows &= ~covered;
+            }
+            if (!found)
+                return false;
+            if (firstStart)
+                toggleShows.Value = shows;
+            this.Logger.LogInfo("Took the old Filter switches over into 'Toggle key shows': " + toggleShows.Value + ".");
+            return true;
+        }
+        private static Dictionary<ConfigDefinition, string> orphanedEntries(ConfigFile file)
+        {
+            try
+            {
+                return typeof(ConfigFile)
+                    .GetProperty("OrphanedEntries", BindingFlags.Instance | BindingFlags.NonPublic)
+                    ?.GetValue(file) as Dictionary<ConfigDefinition, string>;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
         private static ConfigDescription Tagged(string displayName, int order, string description)
         {
             return Tagged(displayName, order, description, null);
@@ -195,7 +281,7 @@ namespace QuestMarkers
         }
         private static bool isPressed(KeyboardShortcut shortcut)
         {
-            if (!Input.GetKeyDown(shortcut.MainKey))
+            if (shortcut.MainKey == KeyCode.None || !Input.GetKeyDown(shortcut.MainKey))
                 return false;
             foreach (KeyCode modifier in shortcut.Modifiers)
                 if (!Input.GetKey(modifier))

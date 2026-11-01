@@ -2,6 +2,79 @@
 
 ## [Unreleased]
 
+## [1.4.0]
+
+### Forge version notes
+
+- Airdrops and the BTR get markers too, and they follow them live: a cyan
+  parachute rides with each airdrop crate from the moment it leaves the plane
+  until it has landed and beyond, and a red armoured car with the BTR while
+  it is out on its route on Woods and Streets. Both are round, a third shape
+  next to the quest pins and the extract diamonds.
+- A second key, and a checklist per key: in the F12 settings menu you tick
+  what each key shows - Quests, Extracts, Airdrops, BTR. The toggle key shows
+  all four; the second key is not bound out of the box and shows the
+  extracts alone. Pressing the other key while markers are up switches to
+  its list, and the same key again hides them. The four on/off switches
+  under *Filter* are gone - whatever you had switched off there is carried
+  over into the toggle key's list the first time the game starts.
+
+### Added
+
+- `MarkerSet`, a `[Flags]` enum, as the type of a key's list: the
+  ConfigurationManager SPT ships draws a flags enum as one checkbox per
+  member, labelled with the member's name, and BepInEx stores it as a
+  readable list such as `Extracts, Airdrops`. Two keys, each with its own
+  list (`Toggle key shows`, `Second key shows`); the key that started a peek
+  decides which list the scan reads, afresh on every scan, so a change in
+  F12 counts at once. An unbound key never fires. When both keys fire at
+  once - one extends the other with a modifier, such as I and Ctrl+I - the
+  one with more modifiers wins, since a key press still counts while other
+  keys are held (the toggle has to work while sprinting).
+- A one-time takeover of the old switches. BepInEx keeps the lines of a
+  file that no Bind has claimed in a private `OrphanedEntries` dictionary and
+  writes them back on every save; it is read by reflection before anything
+  is bound. On the start that first creates the toggle key's list, each old
+  switch that was off clears its member from that list; either way the old
+  lines are removed from the file. The list and the takeover are written in
+  one save with `SaveOnConfigSet` off, so a crash in between cannot leave the
+  plain default on disk and make the next start skip the takeover. Should
+  the property ever be missing, the takeover is simply skipped.
+- Moving targets. A marker can now carry a transform instead of a fixed
+  position, and the per-frame projection reads it every frame, a set height
+  above the object. A target whose object the game has deactivated is
+  skipped the same frame; the game parks rather than destroys both kinds -
+  a crate goes back to its pool, the BTR to its depot - so Unity's null test
+  alone would never fire.
+- Airdrop crates from `GameWorld.SynchronizableObjectLogicProcessor
+  .GetSynchronizableObjects()`, the registry the game keeps of its
+  synchronised objects: `AirdropSynchronizableObject` entries that are
+  `IsActive` and `IsInited`. A scene search would also find the crates kept
+  pooled for later drops, and a crate joins the registry before it is placed.
+  The crate falls and lands as one object, so one transform covers the whole
+  descent.
+- The BTR from `GameWorld.BtrController.BtrView`, marked only while its
+  `RouteState` is `OnRoute`: the view exists all raid long, parked at the
+  depot before it sets out, for the whole raid when the spawn roll kept it
+  there, and after its route is done. Hidden while the player is boarding,
+  riding or leaving it.
+- Round markers for both. A circle has no tip, and inscribed in the rotated
+  pin box it would float 5.4 px (times the marker size) above the spot the
+  other shapes point at; the page moves it down the box's diagonal by that
+  much before scaling, so it sits on the spot at every size.
+- Both types are read through `var` where their containers are named
+  differently on the 4.0 line; the crate needs a reference to
+  `Sirenix.Serialization`, where its base class lives.
+
+### Changed
+
+- The four Filter switches (`Show quest markers`, `Show my extracts`,
+  `Show airdrops`, `Show the BTR`) are replaced by the key lists; the two
+  that shipped in 1.3.0 are taken over as described above.
+- The marker cap applies to targets flagged as quest objectives rather than
+  to everything without an extract state, so airdrops and the BTR stay out of
+  it like the extracts do.
+
 ## [1.3.0]
 
 ### Forge version notes

@@ -15,6 +15,9 @@ namespace QuestMarkers
         public string Label;
         public string Kind;
         public string State;
+        public bool Quest;
+        public Transform Anchor;
+        public float Lift;
     }
     internal sealed class MarkerHud : IDisposable
     {
@@ -136,14 +139,22 @@ namespace QuestMarkers
             visible.Clear();
             for (int i = 0; i < targets.Count; i++)
             {
-                float distance = Vector3.Distance(origin, targets[i].Position);
+                MarkerTarget goal = targets[i];
+                Vector3 position = goal.Position;
+                if ((object)goal.Anchor != null)
+                {
+                    if (goal.Anchor == null || !goal.Anchor.gameObject.activeInHierarchy)
+                        continue;
+                    position = goal.Anchor.position + Vector3.up * goal.Lift;
+                }
+                float distance = Vector3.Distance(origin, position);
                 if (maxDistance > 0f && distance > maxDistance)
                     continue;
-                Vector3 viewport = camera.WorldToViewportPoint(targets[i].Position);
+                Vector3 viewport = camera.WorldToViewportPoint(position);
                 if (!float.IsFinite(viewport.x) || !float.IsFinite(viewport.y)
                     || !float.IsFinite(viewport.z) || !float.IsFinite(distance))
                     continue;
-                visible.Add((targets[i], viewport, distance));
+                visible.Add((goal, viewport, distance));
             }
             visible.Sort((a, b) => a.distance.CompareTo(b.distance));
             int questShown = 0;
@@ -154,7 +165,7 @@ namespace QuestMarkers
             for (int i = 0; i < visible.Count; i++)
             {
                 (MarkerTarget item, Vector3 viewport, float distance) = visible[i];
-                if (item.State == null)
+                if (item.Quest && item.State == null)
                 {
                     if (questShown >= maxMarkers)
                         continue;
